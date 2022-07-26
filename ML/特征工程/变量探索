@@ -1,0 +1,235 @@
+#完整数据信息展示
+def resumetable(df):
+    print(f"Dataset Shape: {df.shape}")
+    summary = pd.DataFrame(df.dtypes,columns=['dtypes'])
+    summary = summary.reset_index()
+    summary['Name'] = summary['index']
+    summary = summary[['Name','dtypes']]
+    summary['Missing'] = df.isnull().sum().values    
+    summary['Uniques'] = df.nunique().values
+    summary['First Value'] = df.loc[0].values
+    summary['Second Value'] = df.loc[1].values
+    summary['Third Value'] = df.loc[2].values
+
+    for name in summary['Name'].value_counts().index:
+        summary.loc[summary['Name'] == name, 'Entropy'] = round(stats.entropy(df[name].value_counts(normalize=True), base=2),2) 
+    return summary
+# #### 数据格式trainX.info()
+trainX.columns
+testX.info()
+trainy.info()
+resumetable(trainX)
+
+
+#每个数字特征得分布可视化
+f = pd.melt(data_train, value_vars=numerical_serial_fea)
+g = sns.FacetGrid(f, col="variable",  col_wrap=2, sharex=False, sharey=False)
+g = g.map(sns.distplot, "value")
+
+
+#kde特征分布图
+for column in data.columns[0:-1]:
+    g = sns.kdeplot(data[column][(data["oringin"] == "train")], color="Red", shade = True)
+    g = sns.kdeplot(data[column][(data["oringin"] == "test")], ax =g, color="Green", shade= True)
+    g.set_xlabel(column)
+    g.set_ylabel("Frequency")
+    g = g.legend(["train","test"])
+    plt.show()
+
+
+#查看连续型变量在不同y值上的分布
+fig, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(15, 6))
+data_train.loc[data_train['isDefault'] == 1] \
+    ['loanAmnt'].apply(np.log) \
+    .plot(kind='hist',
+          bins=100,
+          title='Log Loan Amt - Fraud',
+          color='r',
+          xlim=(-3, 10),
+         ax= ax1)
+data_train.loc[data_train['isDefault'] == 0] \
+    ['loanAmnt'].apply(np.log) \
+    .plot(kind='hist',
+          bins=100,
+          title='Log Loan Amt - Not Fraud',
+          color='b',
+          xlim=(-3, 10),
+         ax=ax2)
+         
+###缺失值填充，填充后带入模型验证哪种填充方式效果更好###
+
+# 全为缺失值删除
+train_data.dropna(how='all') 
+
+#利用均值/众数/中位数填充缺失值        
+def impute_NA_with_avg(data,strategy='mean',NA_col=[]):
+    """
+    replacing the NA with mean/median/most frequent values of that variable. 
+    Note it should only be performed over training set and then propagated to test set.
+    """
+    
+    data_copy = data.copy(deep=True)
+    for i in NA_col:
+        if data_copy[i].isnull().sum()>0:
+            if strategy=='mean':
+                data_copy[i+'_impute_mean'] = data_copy[i].fillna(data[i].mean())
+            elif strategy=='median':
+                data_copy[i+'_impute_median'] = data_copy[i].fillna(data[i].median())
+            elif strategy=='mode':
+                data_copy[i+'_impute_mode'] = data_copy[i].fillna(data[i].mode()[0])
+        else:
+            warn("Column %s has no missing" % i)
+    return data_copy
+# 缺失值进行填充
+train_data = impute_NA_with_avg(train_data, column_headers) 
+df_predict = impute_NA_with_avg(df_predict, column_headers) 
+train_data.fillna(0, inplace = True) 
+df_predict.fillna(0, inplace = True) 
+  
+#KNN计算缺失值
+k=3 
+imputer = KNNImputer(n_neighbors=k)
+imputed = imputer.fit_transform(data)
+#确定k值
+def optimize_k(data, target):
+    errors = []
+    for k in range(1, 20, 2):
+        imputer = KNNImputer(n_neighbors=k)
+        imputed = imputer.fit_transform(data)
+        df_imputed = pd.DataFrame(imputed, columns=df.columns)
+        
+        X = df_imputed.drop(target, axis=1)
+        y = df_imputed[target]
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+        model = RandomForestRegressor() 
+        model.fit(X_train, y_train)
+        preds = model.predict(X_test)
+        error = rmse(y_test, preds) #评估指标根据实际情况自定义
+        errors.append({'K': k, 'RMSE': error})
+    return errors
+
+#随机森林计算缺失值
+##填补一个特征，先将其他特征值的缺失值用0代替，这样每次循环一次，有缺失值的特征便会减少一个
+from sklearn.impute import SimpleImputer  # 填充缺失值的类
+# 找出缺失值从小到大对应的索引值
+sortindex = np.argsort(X_missing_reg.isnull().sum(axis=0)).values
+for i in sortindex:
+
+    # 构建新的特征矩阵和新标签
+    df = X_missing_reg   # 所有的操作都在df上进行，只是最后得到的填充值作用在X_missing_reg上面
+    fillc = df.iloc[:, i]   # 某个需要填充的列，索引为i
+    
+    # 没有被选中填充（!=）的特征与原始标签的连接起来；df就是新特征矩阵
+    df = pd.concat([df.iloc[:, df.columns != i], pd.DataFrame(y_full)], axis=1)
+
+    # 新的特征矩阵df中，对含有缺失值的列，进行0的填补
+    # 检查是否有0 pd.DataFrame(df_0).isnull().sum()
+    df_0 = SimpleImputer(missing_values=np.nan, strategy='constant', fill_value=0).fit_transform(df)
+
+    # 找出训练集和测试集
+    ytrain = fillc[fillc.notnull()]  # 被选中填充的特征矩阵T中的非空值
+    ytest = fillc[fillc.isnull()]  # 被选中填充的特征矩阵T中的空值
+    Xtrain = df_0[ytrain.index, :]  # 新特征矩阵上，被选出来要填充的特征的非空值对应的记录
+    Xtest = df_0[ytest.index, :]   # 空值对应的记录
+
+    # 随机森林填充缺失值
+    rfc = RandomForestRegressor(n_estimators=100)
+    rfc = rfc.fit(Xtrain, ytrain)
+    y_predict = rfc.predict(Xtest)  # predict接口预测得到的结果就是用来填充空值的那些值
+
+    # 将填补好的特征返回到我们的原始特征矩阵中
+    X_missing_reg.loc[X_missing_reg.iloc[:, i].isnull(), i] = y_predict
+
+
+###样本不均衡问题
+
+#kmeans+smoteborderline
+#确定k
+k_score=0
+for i in range(5, 10):
+        clf = KMeans(n_clusters=i)
+        clf.fit(X)
+        if metrics.silhouette_score(X, clf.labels_) > k_score:
+            k_score = metrics.silhouette_score(X, clf.labels_)
+            cluesters = i
+    #确定最优聚类值k=9
+    
+#下采样
+clf = KMeans(n_clusters=cluesters)
+clf.fit(X)#重新训练
+X['labels_k']=clf.labels_
+df=X
+df['label']=y
+df[df['label']==1]['labels_k'].value_counts(),df[df['label']==0]['labels_k'].value_counts()
+r1=df[~(df['labels_k'].isin([2,3,5,6]))&(df['label']==0)]
+r2=df[df['label']==1]
+result=r1.append(r2,ignore_index=True)
+train=result
+
+#过采样
+from imblearn.over_sampling import BorderlineSMOTE
+sm = BorderlineSMOTE(random_state=42,kind="borderline-1",k_neighbors=2)
+X_res, y_res = sm.fit_resample(X, y)
+train=X_res.drop('labels_k',axis=1)
+train['label']=y_res
+y=y_res
+
+####特征筛选
+#卡方检验
+def chi_square_test(X,y,select_k=10):
+   
+    """
+    Compute chi-squared stats between each non-negative feature and class.
+    This score should be used to evaluate categorical variables in a classification task
+    """
+    if select_k >= 1:
+        sel_ = SelectKBest(chi2, k=select_k).fit(X,y)
+        col = X.columns[sel_.get_support()]
+    elif 0 < select_k < 1:
+        sel_ = SelectPercentile(chi2, percentile=select_k*100).fit(X,y)
+        col = X.columns[sel_.get_support()]   
+    else:
+        raise ValueError("select_k must be a positive number")  
+
+    return col
+# 选用卡方检验选取特征
+x_columns = chi_square_test(X, y, 10)
+X = train_data[x_columns]
+y = train_data["target"] 
+
+#相关性判定
+plt.figure(figsize=(96,32))
+correlation = train[1:].corr()
+mask = np.zeros_like(correlation)
+mask[np.triu_indices_from(mask)] = True
+sns.heatmap(data=correlation.round(3),mask=mask,vmin=-0.1,vmax=0.1,annot=True, linewidths=.1)
+
+#极端树筛选变量
+skf = StratifiedKFold(n_splits=5).split(X.values, y.values)
+model=ExtraTreesClassifier()
+oof = np.zeros(len(X))
+# predictions = np.zeros(len(test))
+feature_importance_df = pd.DataFrame()
+
+for fold_, (train_index, test_index) in enumerate(skf):
+    X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+    y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+    clf=model.fit(X_train,y_train)
+    fold_importance_df = pd.DataFrame()
+    fold_importance_df["Feature"] = feas
+    fold_importance_df["importance"] = clf.feature_importances_
+    fold_importance_df["fold"] = fold_ + 1
+    feature_importance_df = pd.concat([feature_importance_df, fold_importance_df], axis=0)
+#画图 
+cols = (feature_importance_df[["Feature", "importance"]]
+        .groupby("Feature")
+        .mean()
+        .sort_values(by="importance", ascending=False)[:150].index)
+best_features = feature_importance_df.loc[feature_importance_df.Feature.isin(cols)]
+
+plt.figure(figsize=(8,18))
+sns.barplot(x="importance", y="Feature", data=best_features.sort_values(by="importance",ascending=False))
+plt.title('Features importance (averaged/folds)')
+plt.tight_layout()
