@@ -1,0 +1,58 @@
+####特征筛选
+#卡方检验
+def chi_square_test(X,y,select_k=10):
+   
+    """
+    Compute chi-squared stats between each non-negative feature and class.
+    This score should be used to evaluate categorical variables in a classification task
+    """
+    if select_k >= 1:
+        sel_ = SelectKBest(chi2, k=select_k).fit(X,y)
+        col = X.columns[sel_.get_support()]
+    elif 0 < select_k < 1:
+        sel_ = SelectPercentile(chi2, percentile=select_k*100).fit(X,y)
+        col = X.columns[sel_.get_support()]   
+    else:
+        raise ValueError("select_k must be a positive number")  
+
+    return col
+# 选用卡方检验选取特征
+x_columns = chi_square_test(X, y, 10)
+X = train_data[x_columns]
+y = train_data["target"] 
+
+#相关性判定
+plt.figure(figsize=(96,32))
+correlation = train[1:].corr()
+mask = np.zeros_like(correlation)
+mask[np.triu_indices_from(mask)] = True
+sns.heatmap(data=correlation.round(3),mask=mask,vmin=-0.1,vmax=0.1,annot=True, linewidths=.1)
+
+#极端树筛选变量
+skf = StratifiedKFold(n_splits=5).split(X.values, y.values)
+model=ExtraTreesClassifier()
+oof = np.zeros(len(X))
+# predictions = np.zeros(len(test))
+feature_importance_df = pd.DataFrame()
+
+for fold_, (train_index, test_index) in enumerate(skf):
+    X_train, X_test = X.iloc[train_index], X.iloc[test_index]
+    y_train, y_test = y.iloc[train_index], y.iloc[test_index]
+
+    clf=model.fit(X_train,y_train)
+    fold_importance_df = pd.DataFrame()
+    fold_importance_df["Feature"] = feas
+    fold_importance_df["importance"] = clf.feature_importances_
+    fold_importance_df["fold"] = fold_ + 1
+    feature_importance_df = pd.concat([feature_importance_df, fold_importance_df], axis=0)
+#画图 
+cols = (feature_importance_df[["Feature", "importance"]]
+        .groupby("Feature")
+        .mean()
+        .sort_values(by="importance", ascending=False)[:150].index)
+best_features = feature_importance_df.loc[feature_importance_df.Feature.isin(cols)]
+
+plt.figure(figsize=(8,18))
+sns.barplot(x="importance", y="Feature", data=best_features.sort_values(by="importance",ascending=False))
+plt.title('Features importance (averaged/folds)')
+plt.tight_layout()
