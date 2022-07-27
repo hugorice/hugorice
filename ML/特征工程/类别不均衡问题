@@ -1,0 +1,45 @@
+##https://xiaosheng.run/2021/09/10/use-imbalanced-learn-lib.html#adasyn-%E5%92%8C-smote
+
+#kmeans+smoteborderline
+#确定k
+k_score=0
+for i in range(5, 10):
+        clf = KMeans(n_clusters=i)
+        clf.fit(X)
+        if metrics.silhouette_score(X, clf.labels_) > k_score:
+            k_score = metrics.silhouette_score(X, clf.labels_)
+            cluesters = i
+    #确定最优聚类值k=9
+    
+#下采样
+clf = KMeans(n_clusters=cluesters)
+clf.fit(X)#重新训练
+X['labels_k']=clf.labels_
+df=X
+df['label']=y
+df[df['label']==1]['labels_k'].value_counts(),df[df['label']==0]['labels_k'].value_counts()
+r1=df[~(df['labels_k'].isin([2,3,5,6]))&(df['label']==0)]
+r2=df[df['label']==1]
+result=r1.append(r2,ignore_index=True)
+train=result
+
+#过采样
+#smoteborderline、smote、adasyn
+#主要的方法还有SMOTE + ENN 和 SMOTE + Tomek 
+from imblearn.over_sampling import BorderlineSMOTE
+sm = BorderlineSMOTE(random_state=42,kind="borderline-1",k_neighbors=2)
+X_res, y_res = sm.fit_resample(X, y)
+train=X_res.drop('labels_k',axis=1)
+train['label']=y_res
+y=y_res
+
+#混合特征采样
+smote_nc = SMOTENC(categorical_features=[0, 2], random_state=0)
+X_resampled, y_resampled = smote_nc.fit_resample(X, y)
+
+#如果数据集只包含离散特征，那么应该直接使用 SMOTEN 过采样法
+sampler = SMOTEN(random_state=0)
+X_res, y_res = sampler.fit_resample(X, y)
+
+#先过采样再进行数据清洗。常用的方法是 SMOTE + Edited Nearest Neighbours (ENN) 和 SMOTE + Tomek Link，在 imbalanced-learn 库分别通过 SMOTEENN 和 SMOTETomek 类来实现
+
