@@ -20,6 +20,10 @@ testX.info()
 trainy.info()
 resumetable(trainX)
 
+# 缺失值可视化显示
+import missingno as msno
+msno.matrix(df=data.iloc[:,1:69], figsize=(20, 14), color=(0.42, 0.1, 0.05),labels=True)
+
 
 #每个数字特征得分布可视化distplot
 f = pd.melt(data_train, value_vars=numerical_serial_fea)
