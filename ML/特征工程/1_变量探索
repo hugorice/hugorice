@@ -21,7 +21,7 @@ trainy.info()
 resumetable(trainX)
 
 
-#每个数字特征得分布可视化
+#每个数字特征得分布可视化distplot
 f = pd.melt(data_train, value_vars=numerical_serial_fea)
 g = sns.FacetGrid(f, col="variable",  col_wrap=2, sharex=False, sharey=False)
 g = g.map(sns.distplot, "value")
@@ -35,23 +35,33 @@ for column in data.columns[0:-1]:
     g.set_ylabel("Frequency")
     g = g.legend(["train","test"])
     plt.show()
+    
+#查看类别型变量在不同y值上的分布
+train_loan_fr = data_train.loc[data_train['isDefault'] == 1]
+train_loan_nofr = data_train.loc[data_train['isDefault'] == 0]
 
+fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 8))
+train_loan_fr.groupby('grade')['grade'].count().plot(kind='barh', ax=ax1, title='Count of grade fraud')
+train_loan_nofr.groupby('grade')['grade'].count().plot(kind='barh', ax=ax2, title='Count of grade non-fraud')
+train_loan_fr.groupby('employmentLength')['employmentLength'].count().plot(kind='barh', ax=ax3, title='Count of employmentLength fraud')
+train_loan_nofr.groupby('employmentLength')['employmentLength'].count().plot(kind='barh', ax=ax4, title='Count of employmentLength non-fraud')
+plt.show()
 
 #查看连续型变量在不同y值上的分布
 fig, ((ax1, ax2)) = plt.subplots(1, 2, figsize=(15, 6))
 data_train.loc[data_train['isDefault'] == 1] \
-    ['loanAmnt'].apply(np.log) \
+    ['loanAmnt']\
     .plot(kind='hist',
           bins=100,
-          title='Log Loan Amt - Fraud',
+          title=' Amt - Fraud',
           color='r',
           xlim=(-3, 10),
          ax= ax1)
 data_train.loc[data_train['isDefault'] == 0] \
-    ['loanAmnt'].apply(np.log) \
+    ['loanAmnt']\
     .plot(kind='hist',
           bins=100,
-          title='Log Loan Amt - Not Fraud',
+          title='Amt - Not Fraud',
           color='b',
           xlim=(-3, 10),
          ax=ax2)
@@ -141,6 +151,55 @@ for i in sortindex:
     # 将填补好的特征返回到我们的原始特征矩阵中
     X_missing_reg.loc[X_missing_reg.iloc[:, i].isnull(), i] = y_predict
 
+###异常值处理
+#3sigma
+def find_outliers_by_3segama(data,fea):
+    data_std = np.std(data[fea])
+    data_mean = np.mean(data[fea])
+    outliers_cut_off = data_std * 3
+    lower_rule = data_mean - outliers_cut_off
+    upper_rule = data_mean + outliers_cut_off
+    data[fea+'_outliers'] = data[fea].apply(lambda x:str('异常值') if x > upper_rule or x < lower_rule else '正常值')
+    return data
+    
+#分位数
+from collections import Counter
+def detect_outliers(df,n,features):
+    """
+    Takes a dataframe df of features and returns a list of the indices
+    corresponding to the observations containing more than n outliers according
+    to the Tukey method.
+    """
+    outlier_indices = []
+    
+    # iterate over features(columns)
+    for col in features:
+        # 1st quartile (25%)
+        Q1 = np.percentile(df[col], 25)
+        # 3rd quartile (75%)
+        Q3 = np.percentile(df[col],75)
+        # Interquartile range (IQR)
+        IQR = Q3 - Q1
+        
+        # outlier step
+        outlier_step = 1.5 * IQR
+        
+        # Determine a list of indices of outliers for feature col
+        outlier_list_col = df[(df[col] < Q1 - outlier_step) | (df[col] > Q3 + outlier_step )].index
+        
+        # append the found outlier indices for col to the list of outlier indices 
+        outlier_indices.extend(outlier_list_col)
+        
+    # select observations containing more than 2 outliers
+    outlier_indices = Counter(outlier_indices)        
+    multiple_outliers = list( k for k, v in outlier_indices.items() if v > n )
+    
+    return multiple_outliers   
+
+# detect outliers from Age, SibSp , Parch and Fare
+Outliers_to_drop = detect_outliers(train,5,(data.columns.tolist())[1:-1])
+len(Outliers_to_drop)
+train = train.drop(Outliers_to_drop, axis = 0).reset_index(drop=True)
 
 ###样本不均衡问题
 
@@ -168,6 +227,8 @@ result=r1.append(r2,ignore_index=True)
 train=result
 
 #过采样
+#smoteborderline、smote、adasyn
+#主要的方法还有SMOTE + ENN 和 SMOTE + Tomek 
 from imblearn.over_sampling import BorderlineSMOTE
 sm = BorderlineSMOTE(random_state=42,kind="borderline-1",k_neighbors=2)
 X_res, y_res = sm.fit_resample(X, y)
