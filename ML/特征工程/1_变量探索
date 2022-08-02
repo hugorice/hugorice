@@ -20,6 +20,42 @@ testX.info()
 trainy.info()
 resumetable(trainX)
 
+def reduce_mem_usage(data):
+    """ 遍历DataFrame数据集中的每列数据集
+    并且更改它们的数据类型        
+    """
+    df=data
+    start_memory = data.memory_usage().sum() / 1024**2
+    print('DataFrame所占用的数据集有: {:.2f} MB'.format(start_memory))
+
+    for col in df.columns[2:-1]:
+        col_type = df[col].dtype
+        if col_type != object:
+            col_min = df[col].min()
+            col_max = df[col].max()
+            if str(col_type)[:3] == 'int':
+                if col_min > np.iinfo(np.int8).min and col_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif col_min > np.iinfo(np.int16).min and col_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif col_min > np.iinfo(np.int32).min and col_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+                elif col_min > np.iinfo(np.int64).min and col_max < np.iinfo(np.int64).max:
+                    df[col] = df[col].astype(np.int64)  
+            else:
+                if col_min > np.finfo(np.float16).min and col_max < np.finfo(np.float16).max:
+                    df[col] = df[col].astype(np.float16)
+                elif col_min > np.finfo(np.float32).min and col_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
+                else:
+                    df[col] = df[col].astype(np.float64)
+
+    end_memory = df.memory_usage().sum() / 1024**2
+    print('优化过之后数据集的内存占有: {:.2f} MB'.format(end_memory))
+    print('减少了大约有: {:.1f}%'.format(100 * (start_memory - end_memory) / start_memory))
+
+    return df
+
 # 缺失值可视化显示
 import missingno as msno
 msno.matrix(df=data.iloc[:,1:69], figsize=(20, 14), color=(0.42, 0.1, 0.05),labels=True)
