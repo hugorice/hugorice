@@ -1,0 +1,364 @@
+import sys
+import os
+import importlib
+import pandas as pd
+import numpy as np
+from collections import Counter
+import re
+from sklearn.linear_model import LogisticRegression
+import xgboost as xgb
+import lightgbm as lgb
+import seaborn as sns
+
+
+sys.path.append('程序文件/程序/library')
+from preprocess import *
+import matplotlib.pyplot as plt
+
+import preprocess
+importlib.reload(preprocess)
+
+#proc1
+output='output'
+if not os.path.exists(output):
+    os.mkdir(output)
+
+testa_base=pd.read_csv('data/testa_base.csv',header=0)  #5w
+testa_trx=pd.read_csv('data/testa_trx.csv',header=0) #1563069
+train_base=pd.read_csv('data/train_base.csv',header=0) #10w
+train_trx=pd.read_csv('data/train_trx.csv',header=0)  #3100753
+
+data_train_view=pd.read_csv('/data/train_view.csv',encoding='gb2312')   
+data_testa_view=pd.read_csv('/data/testa_view.csv',encoding='gb2312')   
+
+# proc 2
+testa_base['label']=-1
+label=train_base.label
+
+testa_trx['sign']='test'
+train_trx['sign']='train'
+
+testa_base['sign']='test'
+train_base['sign']='train'
+
+data_testa_view['sign']='test'
+data_train_view['sign']='train'
+
+trx=pd.concat([train_trx,testa_trx],axis=0)
+base=pd.concat([train_base,testa_base],axis=0)
+view=pd.concat([data_train_view,data_testa_view],axis=0)
+
+
+base['label2']=base.label.apply(lambda x: 1 if x>0 else x)
+
+# # proc 3 拆分日期列
+import re
+trx['trx_tm2']=trx['trx_tm'].apply(lambda x:str(x).replace('1492','2022'))
+trx.trx_tm2=pd.to_datetime(trx.trx_tm2)
+trx['date']=trx.trx_tm2.dt.date                                    
+trx['hour']=trx.trx_tm2.dt.hour
+trx['minute']=trx.trx_tm2.dt.minute                                    
+
+# view['acs_tm2']=view['acs_tm'].apply(lambda x:str(x).replace('1492','2022'))
+# view.acs_tm2=view.acs_tm2.apply(datetime_gen)
+# view.acs_tm2=pd.to_datetime(view.acs_tm2)
+# view['date']=view.acs_tm2.dt.date                                    
+# view['hour']=view.acs_tm2.dt.hour
+# view['minute']=view.acs_tm2.dt.minute  
+
+trx.drop(['trx_tm'],axis=1,inplace=True)
+view.drop(['acs_tm'],axis=1,inplace=True)
+
+def datetime_gen(x):
+    if re.search('下午',x):
+        x=pd.datetime.strptime(x, '%Y-%m-%d %I:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
+    elif re.search('上午',x):
+        x=pd.datetime.strptime(x, '%Y-%m-%d 上午%I:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
+        
+    else:
+        pd.to_datetime(x)
+
+## 缺失值
+结论1:计算trx、base的train和testa,base和trx缺失分布一致，age、gdr缺失不多，且都为系统缺失，直接删除；剩余关于cty_cd缺失的样本打label
+
+# proc 4
+#查看缺失，训练集与testa的缺失分布一致
+#cd、amt、tm缺失
+resumetable_trx_train=resumetable(trx[trx.sign=='train']) #针对训练集，考虑直接删除缺失样本
+# resumetable_trx_train
+
+resumetable_base_train=resumetable(base[base.sign=='train']) #城市列缺失较为严重，考虑单独作为一个类别
+# resumetable_base_train
+
+resumetable_base_train
+
+#proc 5
+# missing_cols=resumetable_trx_train[resumetable_trx_train.Missing >=0.2]['Name']
+# missing_cols
+
+# proc 6
+#输出trx上的missing_id
+missing_id=trx.loc[(trx.sign=='train')&(trx.trx_cd.isna()),'cust_wid']
+# missing_id.value_counts() #发现每个id只有一条缺失记录
+# missing_id=missing_id.tolist()
+# missing_id
+
+#base上的missing_id
+missing_id_base=base.loc[(base.sign=='train')&(base.age.isna()),'cust_wid']
+# missing_id_base #2385
+
+# proc 6.1
+all_missing_id_trx=trx.loc[trx.trx_cd.isna(),'cust_wid']
+all_missing_id_base=base.loc[base.age.isna(),'cust_wid']
+
+#计算每列的缺失数，如果一致则说明是系统性缺失
+missing_sample_cum=trx.loc[trx.sign=='train',missing_cols].isna().sum(axis=1)
+missing_sample_cum.value_counts() #证明为系统性缺失
+
+#缺失id无其他消费记录
+trx.loc[trx['cust_wid'].isin(missing_id)]
+
+#挖掘missing_id的基础信息发现存在基础信息全部缺失、缺失1种、缺失3种的情况；
+#其中年龄特征和性别特征缺失不多，cty_cd缺的最多。都为系统性缺失，只是cty比较严重
+#具体的：1. base、trx全部缺失；2. base有age、gd，trx缺失；3. base都有，trx缺失
+
+# base[base['cust_wid'].isin(missing_id)].isna().sum(axis=1).value_counts() 
+base[base['cust_wid'].isin(missing_id)].isna().sum(axis=0)
+
+#大部分缺失为训练样本，符合真实场景
+base[(base.sign=='train')&(base.cust_wid.isin(missing_id))].isna().sum()
+
+trx[trx.sign=='train'].isna().sum() #3939，无消费行为但有基础信息的id，可能是系统缺失，在基础信息上做标记.这3939中有2629样本的cty也缺失
+
+base[base['cust_wid'].isin(missing_id)].isna().sum(axis=0)
+
+# proc 7
+#trx删除系统缺失的id样本，此时trx还存在部分有基础信息的缺失数据,剩3939个缺失样本
+# trx=trx[~((trx.sign=='train')&(trx.cust_wid.isin(missing_id_base)))]
+# # trx.shape #
+
+# #base删除系统缺失的id样本
+# base=base[~((base.sign=='train')&(base.cust_wid.isin(missing_id_base)))]
+# base.shape #147615
+
+#proc 7.1
+trx=trx[~(trx.cust_wid.isin(all_missing_id_trx))]
+base=base[~(base.cust_wid.isin(all_missing_id_base))]
+
+# proc 8.1
+# base['missing_label_1']=((base.cust_wid.isin(missing_id))&(base.cty_cd.isna())).astype(int)
+base['missing_label_1']=0#无缺失
+base.loc[(base.cust_wid.isin(all_missing_id_trx))&(base.cty_cd.isna()),'missing_label_1']=1 #trx、cty_cd缺失，age有
+base.loc[(~(base.cust_wid.isin(all_missing_id_trx)))&(base.cty_cd.isna()),'missing_label_1']=2#只有cty_cd缺失
+base.loc[(base.cust_wid.isin(all_missing_id_trx))&(~(base.cty_cd.isna())),'missing_label_1']=3#trx缺失，但基础信息全
+
+base.missing_label_1.value_counts()
+
+#------------以上处理，trx无缺失，base全部缺失的数据也无，base剩余缺失分为：1. cty和记录都缺失 2. 只有cty缺失；
+#------------作用：对于test无消费记录的用户，归类为missing_label_1=1or3的
+#------------接下来看view
+
+# check 缺失情况:trx的test、train缺失都删掉了；base只剩下只有cty缺失的数据
+# trx.isna().sum()
+base[base.sign=='train'].isna().sum()
+
+resumetable(data_train_view)
+
+resumetable(data_testa_view)
+
+#proc 9
+view_missing_id_train=data_train_view.loc[data_train_view.page_id.isna(),'cust_wid']#4021
+view_missing_id_testa=data_testa_view.loc[data_testa_view.page_id.isna(),'cust_wid']#1923
+view_missing_id_all=view.loc[view.page_id.isna(),'cust_wid'] #4021+1923
+
+missing_info_three_train=set(view_missing_id_train)&set(missing_id)&set(missing_id_base) #全部数据均缺失
+missing_info_three_testa=set(view_missing_id_testa)&set(all_missing_id_trx)&set(all_missing_id_base)
+
+len(missing_id),len(missing_id_base)
+
+#判断三个数据集缺失id关系
+#
+missing_info_1_intersect=set(view_missing_id_train)&set(missing_id)#view与trx
+missing_info_1_union=set(view_missing_id_train)|set(missing_id)#view与trx
+len(missing_info_1_intersect),len(missing_info_1_union) #3213,7091
+
+#判断三个数据集缺失id关系2
+#
+missing_info_2_intersect=set(view_missing_id_train)&set(missing_id_base)#view与trx
+missing_info_2_union=set(view_missing_id_train)|set(missing_id_base)#view与trx
+len(missing_info_2_intersect),len(missing_info_2_union) #2331,2331
+
+#proc 10
+#删除全部信息都缺失的view的样本
+data_train_view=data_train_view[~data_train_view.cust_wid.isin(missing_info_three_train)]
+data_testa_view=data_testa_view[~data_testa_view.cust_wid.isin(missing_info_three_testa)]
+
+view_missing_id_all=view.loc[view.page_id.isna(),'cust_wid'] #4021+1923
+
+#proc 11 重要！！！！！！
+#三者关系
+
+#全部缺失：直接删除（是否view）
+#trx缺失，但基础信息全1（view是否缺失）
+#只有cty_cd缺失2（view是否缺失）
+#trx、cty_cd缺失，age有3（view是否缺失）
+
+#说明大部分不缺失，少部分只有cty缺失，极少部分只有trx缺失
+base['missing_label_2']=0
+base.loc[(base.cust_wid.isin(view_missing_id_all))&(base.missing_label_1==1),'missing_label_2']=1
+base.loc[(~base.cust_wid.isin(view_missing_id_all))&(base.missing_label_1==1),'missing_label_2']=2
+
+base.loc[(base.cust_wid.isin(view_missing_id_all))&(base.missing_label_1==2),'missing_label_2']=3
+base.loc[(~base.cust_wid.isin(view_missing_id_all))&(base.missing_label_1==2),'missing_label_2']=4
+
+base.loc[(base.cust_wid.isin(view_missing_id_all))&(base.missing_label_1==3),'missing_label_2']=5
+base.loc[(~base.cust_wid.isin(view_missing_id_all))&(base.missing_label_1==3),'missing_label_2']=6
+
+base.missing_label_2.value_counts()
+
+#proc 12 删除age异常
+base=base[~((base.sign=='train')&(base.age<=2))]
+
+#--------以上处理为加入view对缺失值进行处理，输出missing_label_2
+
+## amt、category做统计
+count 总订单数、日最多订单数、多笔订单数的天数、连续有消费记录的最大天数、最小天数、
+by hour：非正常时间段消费的次数、最多消费的时间段
+产品类别，先按照abcd划分看效果：count、筛选热门商品by cate总次数、同一天内最大次数、发生天数、发生多次的天数、连续最大最小天数、hour相减最大；
+
+# proc 14
+#dic_city3包含省份、港澳台、包含前50个省份的市
+#考虑将空值替换为-1
+base.cty_cd.fillna(-1,inplace=True)
+base['city_info']=base.cty_cd.map(dic_city2)
+
+base.city_info.value_counts()
+
+# proc 15
+#------------------------保存文件
+base.to_csv('base.csv',index=0)
+trx.to_csv('trx.csv',index=0)
+
+#0,10,B,1
+train_base1=base[base.sign=='train']
+cross_table = pd.crosstab(train_base1['city_info'], train_base1['label2'], normalize='index')
+# 绘制条形图
+cross_table.plot(kind='bar', stacked=True)
+# 添加标题和标签
+plt.xlabel('Category')
+plt.ylabel('Proportion')
+# 显示图表
+plt.show()
+
+## trx日期统计特征
+
+trx=pd.read_csv('trx.csv')
+base=pd.read_csv('base.csv')
+
+trx.date.value_counts().reset_index().sort_values(by='date')
+
+#proc 1
+fea='date'
+wid_time_size=trx.groupby('cust_wid')[fea].agg(['count','min','max']).reset_index().rename(columns={'count':f'{fea}_cnt','min':f'{fea}_min','max':f'{fea}_max'})
+base=base.merge(wid_time_size,how='left',on='cust_wid')
+base['id_date_diff']=(pd.to_datetime(base.date_max)-pd.to_datetime(base.date_min)).dt.days
+
+base.head()
+
+#proc 2
+fea='date'
+fea2='date'
+trx['id_date_cnt']=trx.groupby(['cust_wid',fea])[fea].transform('count').reset_index(drop=True)
+trx['id_date_cnt_max']=trx.groupby('cust_wid')['id_date_cnt'].transform('max').reset_index(drop=True)
+tmp=trx.loc[(trx.id_date_cnt==trx.id_date_cnt_max),['cust_wid',fea2]]
+tmp=tmp.groupby('cust_wid')[fea2].apply(set).reset_index(name=f'max_{fea2}_list').fillna(0)
+base=base.merge(tmp,how='left',on='cust_wid')
+#trx_cd
+fea='date'
+fea2='trx_cd'
+tmp=trx.loc[(trx.id_date_cnt==trx.id_date_cnt_max),['cust_wid',fea2]]
+tmp=tmp.groupby('cust_wid')[fea2].apply(list).reset_index(name=f'max_{fea}_{fea2}_list').fillna(0)
+base=base.merge(tmp,how='left',on='cust_wid')
+
+#proc 3
+fea='hour'
+fea2='hour'
+trx['id_date_cnt']=trx.groupby(['cust_wid',fea])[fea].transform('count').reset_index(drop=True)
+trx['id_date_cnt_max']=trx.groupby('cust_wid')['id_date_cnt'].transform('max').reset_index(drop=True)
+tmp=trx.loc[(trx.id_date_cnt==trx.id_date_cnt_max),['cust_wid',fea2]]
+tmp=tmp.groupby('cust_wid')[fea2].apply(set).reset_index(name=f'max_{fea2}_list').fillna(0)
+base=base.merge(tmp,how='left',on='cust_wid')
+#trx_cd
+fea='hour'
+fea2='trx_cd'
+tmp=trx.loc[(trx.id_date_cnt==trx.id_date_cnt_max),['cust_wid',fea2]]
+tmp=tmp.groupby('cust_wid')[fea2].apply(list).reset_index(name=f'max_{fea}_{fea2}_list').fillna(0)
+base=base.merge(tmp,how='left',on='cust_wid')
+
+#proc 4
+base.drop(['max_hour_list'],axis=1,inplace=True)
+
+#proc 5
+#没有fillna
+cnt=[3,4,5,6]
+for c in cnt:
+    fea='date'
+    tmp=trx[trx.id_date_cnt==c].groupby('cust_wid')['cust_wid'].agg('count').reset_index(name=f'date_cnt_is_{c}').fillna(0)
+    base=base.merge(tmp,how='left',on='cust_wid')
+
+tmp.head()
+
+# #PROC 6
+#apply比transform好用
+#drop rank2
+
+tmp=trx[['cust_wid','date']]
+tmp['date']=pd.to_datetime(tmp['date'])
+
+tmp2=tmp.groupby('cust_wid')['date'].apply(lambda x:x.diff().dt.days)
+tmp2=pd.Series(tmp2,name='date_diff')
+
+tmp['date_diff']=tmp2.fillna(1)
+
+tmp2=tmp.groupby('cust_wid')['date'].apply('rank')
+
+tmp['rank']=tmp2
+
+tmp3=tmp.groupby('cust_wid')['date_diff'].transform('cumsum')
+
+tmp['date_diff2']=tmp3
+tmp['rank_sub_cols']=tmp.date_diff2-tmp['rank']
+
+#输出
+tmp4=tmp.groupby(['cust_wid','rank_sub_cols'])['rank_sub_cols'].count().reset_index(name='lianxu')
+
+
+lianxu_max_days=tmp4.groupby('cust_wid')['lianxu'].agg('max')
+base=base.merge(lianxu_max_days,how='left',on='cust_wid')
+
+
+base.drop(['lianxu_bigger_6_days'],axis=1,inplace=True)
+
+#proc
+for day in [3,4,5]:
+    tmp=tmp4[tmp4.lianxu==day].groupby('cust_wid')['lianxu'].agg('count').reset_index(name=f'lianxu_{day}_days')
+    base=base.merge(tmp,how='left',on='cust_wid')
+
+
+#proc 这个特征不一定有用
+tmp=tmp4[tmp4.lianxu>=6].groupby('cust_wid')['lianxu'].agg('count').reset_index(name=f'lianxu_bigger_6_days')
+base=base.merge(tmp,how='left',on='cust_wid')
+base.lianxu_bigger_6_days.fillna(0,inplace=True)
+
+
+
+trx.date.value_counts()# 2022-08-10,2022-08-01
+
+date_list=[]
+for d in date_list:
+    trx[trx.date==d].groupby('cust_wid').agg(count).reset_index(name=f'date_cnt_fire')
+
+trx.trx_cd.value_counts()
+
+trx.head()
+
